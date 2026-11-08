@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Bus Speaker Database</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  *{ -webkit-tap-highlight-color: transparent; }
+  body{ margin:0; }
+  @media (max-width: 1023px){
+    .app-shell{ width:100% !important; max-width:100% !important; padding:0 !important; }
+    .topbar{ border-radius:0 !important; }
+    .mobile-card{ border-radius:0 !important; border-left:none !important; border-right:none !important; }
+    .mobile-pad{ padding-left:12px; padding-right:12px; }
+    input, button{ font-size:16px !important; }
+  }
+  @media (min-width: 1024px){
+    .app-shell{ max-width:1280px !important; }
+    .desktop-grid{ display:grid; grid-template-columns: 380px 1fr; gap:20px; align-items:start; }
+    .desktop-left{ position:sticky; top:84px; }
+    .desktop-header{ position:sticky; top:0; z-index:40; }
+  }
+</style>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, doc, deleteDoc, getDoc, setDoc, updateDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const firebaseConfig = { apiKey: "AIzaSyArqeiC0k4Q4nUzEIJR8aGsRPqDwBDku9M", authDomain: "stopreporter-sound-check.firebaseapp.com", projectId: "stopreporter-sound-check", storageBucket: "stopreporter-sound-check.firebasestorage.app", messagingSenderId: "1017876979759", appId: "1:1017876979759:web:60573d18f9444a08cf66da", measurementId: "G-GNQM41YEER" };
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const ADMIN_PHONES = ["97056715"];
+async function hashPassword(pw){ const enc = new TextEncoder().encode(pw); const buf = await crypto.subtle.digest('SHA-256', enc); return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+let MY_PHONE = localStorage.getItem('my_phone');
+let MY_NAME = localStorage.getItem('my_name') || '';
+let authMode = 'login'; let adminFilter = 'all'; let adminLoading = false;
+function isAdmin(){ return MY_PHONE && ADMIN_PHONES.includes(MY_PHONE); }
+window.switchAuth = (mode) => { authMode = mode; document.getElementById('btnLoginTab').className = mode==='login' ? 'flex-1 p-3 rounded-lg font-bold bg-black text-white' : 'flex-1 p-3 rounded-lg font-bold bg-gray-200'; document.getElementById('btnRegisterTab').className = mode==='register' ? 'flex-1 p-3 rounded-lg font-bold bg-black text-white' : 'flex-1 p-3 rounded-lg font-bold bg-gray-200'; document.getElementById('confirmBox').classList.toggle('hidden', mode!=='register'); document.getElementById('nameBox').classList.toggle('hidden', mode!=='register'); document.getElementById('authBtn').innerText = mode==='login' ? 'Login' : 'Register'; };
+window.doLogin = async () => { const phone = document.getElementById('phoneInput').value.trim(); const pw = document.getElementById('passwordInput').value.trim(); if(!phone) return alert('Please enter phone number'); if(!pw) return alert('Please enter password'); const btn = document.getElementById('authBtn'); btn.innerText = 'Checking...'; btn.disabled = true; try{ const hash = await hashPassword(phone + '_' + pw); const snap = await getDoc(doc(db, "Users", phone)); if(!snap.exists()){ alert('Account not found. Please go to Register first.'); switchAuth('register'); } else if(snap.data().passHash !== hash){ alert('Wrong password! Please use Forgot Password below.'); } else { MY_NAME = snap.data().username || snap.data().name || ''; localStorage.setItem('my_phone', phone); localStorage.setItem('my_name', MY_NAME); MY_PHONE = phone; checkLogin(); } }catch(e){ alert('Login failed: ' + e.message); } btn.innerText = 'Login'; btn.disabled = false; };
+window.doRegister = async () => { const phone = document.getElementById('phoneInput').value.trim(); const username = document.getElementById('usernameInput').value.trim(); const pw = document.getElementById('passwordInput').value.trim(); const pw2 = document.getElementById('confirmInput').value.trim(); if(!username) return alert('Please enter username'); if(!phone) return alert('Please enter phone number'); if(phone.length < 8) return alert('Phone number too short'); if(!pw) return alert('Please set a password'); if(pw.length < 4) return alert('Password must be at least 4 characters'); if(pw !== pw2) return alert('Passwords do not match.'); const btn = document.getElementById('authBtn'); btn.innerText = 'Registering...'; btn.disabled = true; try{ const snap = await getDoc(doc(db, "Users", phone)); if(snap.exists()){ alert('Already registered. Please go to Login.'); switchAuth('login'); } else { const hash = await hashPassword(phone + '_' + pw); await setDoc(doc(db, "Users", phone), { phone, username, name: username, passHash: hash, isAdmin: ADMIN_PHONES.includes(phone), createdAt: serverTimestamp() }); localStorage.setItem('my_phone', phone); localStorage.setItem('my_name', username); MY_PHONE = phone; MY_NAME = username; alert('Registered! Welcome ' + username); checkLogin(); } }catch(e){ alert('Register failed: ' + e.message); } btn.innerText = 'Register'; btn.disabled = false; };
+window.handleAuth = () => { if(authMode==='login') doLogin(); else doRegister(); };
+window.logoutPhone = () => { if(!confirm('Log out?')) return; localStorage.removeItem('my_phone'); localStorage.removeItem('my_pass_hash'); localStorage.removeItem('my_name'); MY_PHONE = null; MY_NAME=''; location.reload(); };
+window.showForgot = () => { document.getElementById('forgotBox').classList.toggle('hidden'); };
+window.submitResetRequest = async () => { const phone = document.getElementById('forgotPhone').value.trim(); const newPw = document.getElementById('forgotNewPw').value.trim(); const newPw2 = document.getElementById('forgotNewPw2').value.trim(); if(!phone) return alert('Please enter your phone number'); if(phone.length < 8) return alert('Phone number too short'); if(!newPw) return alert('Please enter your new password'); if(newPw.length < 4) return alert('New password must be at least 4 characters'); if(newPw !== newPw2) return alert('New passwords do not match'); try{ const snap = await getDoc(doc(db, "Users", phone)); if(!snap.exists()) return alert('This phone number is not registered. Please go to Register first.'); const reqName = snap.data().username || snap.data().name || ''; await addDoc(collection(db, "ResetRequests"), { phone, username: reqName, newPw, status: 'pending', createdAt: serverTimestamp() }); alert('Request sent to Admin!\nAfter Admin approves, you can login with your new password: ' + newPw); document.getElementById('forgotBox').classList.add('hidden'); document.getElementById('forgotPhone').value=''; document.getElementById('forgotNewPw').value=''; document.getElementById('forgotNewPw2').value=''; }catch(e){ alert('Failed to send: ' + e.message); } };
+let resetRequests = [];
+async function loadResetRequests(){ if(!isAdmin()) return; const snap = await getDocs(collection(db, "ResetRequests")); resetRequests = []; snap.forEach(d=>{ let data=d.data(); data.id=d.id; resetRequests.push(data); }); resetRequests.sort((a,b)=>{ let ta=a.createdAt?a.createdAt.seconds:0; let tb=b.createdAt?b.createdAt.seconds:0; return tb-ta; }); const pending = resetRequests.filter(r=>r.status==='pending'); const box = document.getElementById('resetList'); const badge = document.getElementById('resetCount'); if(badge) badge.innerText = pending.length; if(!box) return; if(pending.length===0){ box.innerHTML = `<div class="text-gray-500 text-center text-sm">No password reset requests yet</div>`; return; } box.innerHTML = pending.map(r=>{ const t = r.createdAt ? new Date(r.createdAt.seconds*1000).toLocaleString('en-HK') : 'Just now'; return `<div class="border-2 border-orange-300 bg-orange-50 p-3 rounded-xl mb-2"><div class="flex justify-between"><b>${r.username||'Unknown'} - ${r.phone}</b><span class="text-xs">${t}</span></div><div class="text-sm mt-1">Requested new password: <b class="text-red-600">${r.newPw}</b></div><div class="flex gap-2 mt-2"><button onclick="approveReset('${r.id}','${r.phone}','${r.newPw}')" class="flex-1 bg-green-600 text-white p-2 rounded-lg font-bold text-sm">Approve</button><button onclick="rejectReset('${r.id}')" class="bg-gray-300 px-3 rounded-lg font-bold text-sm">Reject</button></div></div>`; }).join(''); }
+window.approveReset = async (id, phone, newPw) => { if(!isAdmin()) return alert('No permission'); if(!confirm('Approve ' + phone + ' to change password to: ' + newPw + ' ?')) return; const hash = await hashPassword(phone + '_' + newPw); await updateDoc(doc(db, "Users", phone), { passHash: hash }); await updateDoc(doc(db, "ResetRequests", id), { status: 'approved' }); alert('Approved! ' + phone + ' can now login with new password: ' + newPw); loadResetRequests(); };
+window.rejectReset = async (id) => { if(!isAdmin()) return alert('No permission'); if(!confirm('Reject this request?')) return; await updateDoc(doc(db, "ResetRequests", id), { status: 'rejected' }); loadResetRequests(); };
+async function loadUsers(){ if(!isAdmin() || adminLoading) return; adminLoading = true; try{ const snap = await getDocs(collection(db, "Users")); const box = document.getElementById('userList'); if(!box) return; document.getElementById('userCount').innerText = snap.size; if(snap.empty){ box.innerHTML = `<div class="text-gray-500 text-center">No users yet</div>`; return; } let html = ''; snap.forEach(d=>{ const u = d.data(); const t = u.createdAt ? new Date(u.createdAt.seconds*1000).toLocaleString('en-HK') : '-'; const displayName = u.username || u.name || 'Unknown'; const adminTag = ADMIN_PHONES.includes(u.phone) ? ' <span class="bg-black text-white text-xs px-2 py-0.5 rounded-full">Admin</span>' : ''; const count = reports.filter(r=>r.userId==='phone_'+u.phone).length; html += `<div class="border p-3 rounded-xl mb-2 bg-white"><div class="flex justify-between"><b>${displayName}</b><span class="text-xs">${t}</span></div><div class="text-sm text-gray-600">Phone: ${u.phone}</div><div class="mt-1">${adminTag} <span class="text-xs bg-gray-100 px-2 py-0.5 rounded-full">${count} reports</span></div><div class="text-xs text-gray-500">Password: Encrypted - Cannot View</div><div class="flex gap-2 mt-2 flex-wrap"><input id="newpw_${u.phone}" class="border p-2 rounded-lg flex-1 text-sm" placeholder="New password"><button onclick="adminReset('${u.phone}')" class="bg-red-600 text-white px-3 rounded-lg text-sm font-bold">Reset</button><button onclick="adminViewUser('${u.phone}')" class="bg-gray-800 text-white px-3 rounded-lg text-sm font-bold">View Reports</button><button onclick="adminDeleteUser('${u.phone}')" class="bg-black text-white px-3 rounded-lg text-sm font-bold">Delete User</button></div></div>`; }); box.innerHTML = html; }catch(e){ console.log(e); } adminLoading = false; }
+window.adminReset = async (phone) => { if(!isAdmin()) return alert('No permission'); const newPw = document.getElementById('newpw_'+phone).value.trim(); if(!newPw) return alert('Please enter new password'); if(newPw.length < 4) return alert('Password must be at least 4 characters'); if(!confirm('Reset password for ' + phone + ' to: ' + newPw + ' ?')) return; const hash = await hashPassword(phone + '_' + newPw); await updateDoc(doc(db, "Users", phone), { passHash: hash }); alert('Password for ' + phone + ' reset to: ' + newPw); };
+window.adminDeleteUser = async (phone) => { if(!isAdmin()) return alert('No permission'); if(ADMIN_PHONES.includes(phone)) return alert('Cannot delete Admin!'); if(!confirm('Delete user ' + phone + ' ? This cannot be undone!')) return; await deleteDoc(doc(db, "Users", phone)); alert('Deleted user ' + phone); loadUsers(); };
+window.setAdminFilter = (f) => { adminFilter = f; document.getElementById('filterAll').className = f==='all' ? 'px-3 py-1 rounded-full text-xs font-bold bg-black text-white' : 'px-3 py-1 rounded-full text-xs font-bold bg-gray-200'; document.getElementById('filterIssue').className = f==='issue' ? 'px-3 py-1 rounded-full text-xs font-bold bg-black text-white' : 'px-3 py-1 rounded-full text-xs font-bold bg-gray-200'; document.getElementById('filterOk').className = f==='ok' ? 'px-3 py-1 rounded-full text-xs font-bold bg-black text-white' : 'px-3 py-1 rounded-full text-xs font-bold bg-gray-200'; renderAllReports(); };
+window.adminViewUser = (phone) => { const el = document.getElementById('adminSearch'); if(el) el.value = phone; renderAllReports(); };
+function reporterDisplay(d){ const name = d.reporterName || d.username || d.name || ''; if(!name) return 'Unknown'; const phone = d.userId ? d.userId.replace('phone_','') : (d.phone||''); const isOwner = MY_PHONE && d.userId === 'phone_' + MY_PHONE; if((isOwner || isAdmin()) && phone) return `${name} (${phone})`; return name; }
+function renderAllReports(){ if(!isAdmin()) return; let list = [...reports].sort((a,b)=>{ let ta = a.createdAt ? a.createdAt.seconds : 0; let tb = b.createdAt ? b.createdAt.seconds : 0; return tb - ta; }); if(adminFilter==='issue') list = list.filter(r=>!r.ok); if(adminFilter==='ok') list = list.filter(r=>r.ok); const searchEl = document.getElementById('adminSearch'); const kw = searchEl ? searchEl.value.trim() : ''; if(kw){ list = list.filter(r=> String(r.busNo).includes(kw) || (r.route && r.route.includes(kw.toUpperCase())) || (r.userId && r.userId.includes(kw)) || (r.reporterName && r.reporterName.includes(kw)) || (r.username && r.username.includes(kw))); } const countEl = document.getElementById('allReportCount'); if(countEl) countEl.innerText = list.length; const box = document.getElementById('allReportsList'); if(!box) return; if(list.length===0){ box.innerHTML = `<div class="text-gray-500 text-center bg-white p-4 rounded-xl">No Records</div>`; return; } box.innerHTML = list.map(d=>{ const dateObj = d.createdAt? new Date(d.createdAt.seconds*1000): new Date(); const t = d.createdAt? dateObj.toLocaleString('en-HK'):'Just now'; const st = getCardStyle(d, dateObj); return `<div class="border-2 ${st.bg} p-3 rounded-xl mb-2 bg-white"><div class="flex justify-between"><b>Fleet No. ${d.busNo}</b><span class="text-xs">${t}</span></div><div class="text-sm font-bold mt-1">Citybus Route: ${d.route || '-'} | Reporter: ${reporterDisplay(d)}</div><div class="font-bold">${st.tag} - ${problemText(d)}</div>${d.note?`<div class="text-sm">Remark: ${d.note}</div>`:''}<button onclick="adminDeleteReport('${d.id}')" class="text-xs text-red-600 underline mt-1">Delete this report (Admin)</button></div>`; }).join(''); }
+window.adminDeleteReport = async (id) => { if(!isAdmin()) return alert('No permission'); if(!confirm('Delete this report?')) return; await deleteDoc(doc(db,"Checks", id)); alert('Deleted'); };
+window.adminDeleteAllReports = async () => { if(!isAdmin()) return alert('No permission'); if(!confirm('Delete ALL reports? This will delete ' + reports.length + ' reports. Fleet numbers and Users will NOT be deleted. Are you sure?')) return; if(!confirm('Really confirm? This cannot be undone!')) return; const snap = await getDocs(collection(db, "Checks")); let c = 0; for(const d of snap.docs){ await deleteDoc(doc(db, "Checks", d.id)); c++; } alert('Deleted ' + c + ' reports! Fleet numbers and Users are kept.'); renderAllReports(); loadUsers(); };
+window.refreshAdmin = () => { loadUsers(); renderAllReports(); loadResetRequests(); loadCustomFleet(); };
+let CUSTOM_FLEET = [];
+function getAllFleet(){ const all = [...FLEET_BASE, ...CUSTOM_FLEET]; return [...new Set(all)]; }
+async function loadCustomFleet(){
+  try{
+    const snap = await getDocs(collection(db, "CustomFleet"));
+    CUSTOM_FLEET = [];
+    snap.forEach(d=>{ const v = d.data().fleetNo || d.id; CUSTOM_FLEET.push(String(v)); });
+    const box = document.getElementById('customFleetList');
+    if(box){
+      if(CUSTOM_FLEET.length===0){ box.innerHTML = `<div class="text-gray-500 text-sm">No custom fleet numbers added yet.</div>`; }
+      else { box.innerHTML = CUSTOM_FLEET.sort((a,b)=>Number(a)-Number(b)).map(n=>`<span class="inline-flex items-center gap-1 bg-white border px-2 py-1 rounded-full text-xs mr-1 mb-1">${n} <button onclick="adminDeleteFleet('${n}')" class="text-red-600 font-bold">x</button></span>`).join(''); }
+    }
+    const countEl = document.getElementById('customFleetCount');
+    if(countEl) countEl.innerText = CUSTOM_FLEET.length;
+  }catch(e){ console.log(e); }
+}
+window.adminAddFleet = async () => {
+  if(!isAdmin()) return alert('No permission');
+  const input = document.getElementById('newFleetInput');
+  const val = input.value.trim();
+  if(!val) return alert('Please enter a fleet number');
+  if(!/^[0-9]+$/.test(val)) return alert('Fleet number must be numbers only');
+  if(getAllFleet().includes(val)) return alert('Fleet No. ' + val + ' already exists');
+  await setDoc(doc(db, "CustomFleet", val), { fleetNo: val, addedBy: MY_PHONE, createdAt: serverTimestamp() });
+  input.value = '';
+  alert('Added Fleet No. ' + val + ' ! Everyone can now search it.');
+  loadCustomFleet();
+};
+window.adminDeleteFleet = async (fleetNo) => {
+  if(!isAdmin()) return alert('No permission');
+  if(!confirm('Delete custom Fleet No. ' + fleetNo + ' ?')) return;
+  await deleteDoc(doc(db, "CustomFleet", fleetNo));
+  loadCustomFleet();
+};
+function checkLogin(){ const loginView = document.getElementById('loginView'); const mainView = document.getElementById('mainView'); const topbar = document.getElementById('topbar'); const logoutBtn = document.getElementById('logoutBtn'); const userLabel = document.getElementById('userLabel'); if(!MY_PHONE){ loginView.classList.remove('hidden'); mainView.classList.add('hidden'); if(topbar) topbar.classList.remove('hidden'); if(logoutBtn) logoutBtn.classList.add('hidden'); if(userLabel) userLabel.innerText = ''; } else { loginView.classList.add('hidden'); mainView.classList.remove('hidden'); if(topbar) topbar.classList.remove('hidden'); if(logoutBtn) logoutBtn.classList.remove('hidden'); if(userLabel) userLabel.innerText = (MY_NAME ? MY_NAME + ' - ' : '') + '****' + MY_PHONE.slice(-4) + (isAdmin() ? ' (Admin)' : ''); document.getElementById('adminBar').classList.toggle('hidden', !isAdmin()); } }
+function range(a,b){let r=[];for(let i=a;i<=b;i++)r.push(String(i));return r;}
+let FLEET_BASE = ["1581","2051",...range(1830,1845),...range(2501,2505),...range(3800,3859),...range(4020,4039),...range(4045,4068),...range(4070,4091),...range(4500,4529),...range(9500,9559),...range(5200,5224),...range(5518,5549),"5553","5554",...range(5563,5580),...range(5583,5851),...range(6100,6209),...range(6300,6588),"6700","6701",...range(6800,6871),...range(7000,7059),...range(8000,8065),...range(8110,8113),"8122","8123","8124","8126",...range(8128,8202),...range(8205,8235),...range(8236,8351),...range(8391,8524),...range(8540,8581),...range(8800,8852),...range(9101,9102),"9104","9106","9107",...range(9108,9157),"8400","8401","6090","6500","8900","8910","8911",...range(27,33),...range(270,281),...range(895,899)];
+let KNOWN = {};
+let reports = []; let selected = null; let currentTab = 'search';
+window.switchTab = (tab) => { if(tab==='admin' && !isAdmin()) return alert('No permission'); currentTab = tab; document.getElementById('tabSearch').className = tab==='search' ? 'flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-black text-white' : 'flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-gray-200'; document.getElementById('tabHistory').className = tab==='history' ? 'flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-black text-white' : 'flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-gray-200'; document.getElementById('tabAdmin').className = tab==='admin' ? 'w-full p-3 rounded-xl font-bold bg-red-700 text-white shadow-lg border-2 border-red-900' : 'w-full p-3 rounded-xl font-bold bg-red-600 text-white shadow-lg'; document.getElementById('searchView').classList.toggle('hidden', tab!=='search'); document.getElementById('historyView').classList.toggle('hidden', tab!=='history'); document.getElementById('adminView').classList.toggle('hidden', tab!=='admin'); if(tab==='history') renderMyHistory(); if(tab==='admin'){ loadUsers(); renderAllReports(); loadResetRequests(); loadCustomFleet(); } };
+window.searchBus = () => { const kw = document.getElementById('searchBox').value.trim(); if(!kw){ alert('Please enter Fleet No., e.g. 2503'); return; } if(!getAllFleet().includes(kw)){ document.getElementById('result').innerHTML = `<div class="bg-red-100 p-4 rounded-xl text-center font-bold">Bus ${kw} Not Found<br><span class="text-xs font-normal">If this is a new bus, please ask Admin to add it in Admin Panel.</span></div>`; document.getElementById('form').classList.add('hidden'); return; } selected = kw; showBus(kw); };
+function getCardStyle(d, dateObj){ let days = dateObj ? (Date.now() - dateObj.getTime()) / (1000*60*60*24) : 0; let isOld = days > 30; if(isOld) return { bg:'bg-yellow-100 border-yellow-400', tag:'Report Over 1 Month Old', days: Math.floor(days) }; if(d.ok) return { bg:'bg-green-100 border-green-400', tag:'✅ 正常', days: Math.floor(days) }; return { bg:'bg-red-100 border-red-400', tag:'❌ 有問題', days: Math.floor(days) }; }
+function problemText(d){ if(d.ok) return '正常'; let arr=[]; if(d.mute) arr.push('啞咗'); if(d.stereo) arr.push('還回立體'); if(d.bao) arr.push('爆音'); if(d.flat) arr.push('打扁咗'); return arr.length? arr.join('、') : '有問題'; }
+function showBus(n){ const list = reports.filter(r=>String(r.busNo)===String(n)); const k = KNOWN[n]; let html = `<div class="bg-white p-4 rounded-2xl shadow mb-3"><div class="flex justify-between"><b class="text-xl">Fleet No. ${n}</b><span class="text-xs bg-gray-100 px-2 py-1 rounded-full">${getAllFleet().length} Buses</span></div>`; if(list.length===0 && !k){ html += `<div class="bg-red-100 border-2 border-red-400 p-4 rounded-xl mt-3 text-center"><div class="font-bold text-red-700 text-lg mt-1">No Records</div></div>`; } else { html += `<div class="mt-3 space-y-2">`; if(k){ let kd = new Date(k.date); let st = getCardStyle(k, kd); html += `<div class="border-2 ${st.bg} p-3 rounded-xl"><div class="font-bold">${st.tag}</div><div class="text-sm">${k.date}</div><div class="text-sm font-bold mt-1">${problemText(k)}</div></div>`; } list.forEach(d=>{ const dateObj = d.createdAt? new Date(d.createdAt.seconds*1000): new Date(); const t = d.createdAt? dateObj.toLocaleString('en-HK'):'Just now'; const st = getCardStyle(d, dateObj); html += `<div class="border-2 ${st.bg} p-3 rounded-xl"><div class="flex justify-between"><b>${st.tag}</b><span class="text-xs">${t}</span></div><div class="text-sm font-bold mt-1">Reporter: ${reporterDisplay(d)}</div>${d.route?`<div class="text-sm font-bold mt-1">Citybus Route: ${d.route}</div>`:''}<div class="font-bold mt-1">${problemText(d)}</div>${d.note?`<div class="text-sm mt-1">Remark: ${d.note}</div>`:''}</div>`; }); html += `</div>`; } html += `</div>`; document.getElementById('result').innerHTML = html; document.getElementById('form').classList.remove('hidden'); document.getElementById('formTitle').innerText = `Add Record - Bus ${n}`; document.getElementById('fleetLabel').innerText = n; }
+window.saveReport = async () => { if(!selected) return; if(!MY_PHONE){ alert('Please login first'); checkLogin(); return; } const route = document.getElementById('routeInput').value.trim().toUpperCase(); if(!route){ alert('Please enter Citybus route, e.g. 10'); return; } const data = { busNo:selected, route, userId: 'phone_' + MY_PHONE, phone: MY_PHONE.slice(-4), reporterName: MY_NAME || '', username: MY_NAME || '', mute:document.getElementById('c1').checked, stereo:document.getElementById('c2').checked, bao:document.getElementById('c3').checked, flat:document.getElementById('c4').checked, ok:document.getElementById('c5').checked, note:document.getElementById('note').value, createdAt: serverTimestamp() }; await addDoc(collection(db,"Checks"), data); alert('Saved '+selected+' - Citybus '+route); document.getElementById('routeInput').value=''; document.getElementById('note').value=''; ['c1','c2','c3','c4','c5'].forEach(id=>document.getElementById(id).checked=false); if(currentTab==='history') renderMyHistory(); };
+function renderMyHistory(){ const myKey = 'phone_' + MY_PHONE; const mine = reports.filter(r=>r.userId===myKey).sort((a,b)=>{ let ta = a.createdAt ? a.createdAt.seconds : 0; let tb = b.createdAt ? b.createdAt.seconds : 0; return tb - ta; }); const box = document.getElementById('myHistoryList'); document.getElementById('myCount').innerText = mine.length; if(mine.length===0){ box.innerHTML = `<div class="bg-white p-4 rounded-xl text-center text-gray-500">No Records</div>`; return; } box.innerHTML = mine.map(d=>{ const dateObj = d.createdAt? new Date(d.createdAt.seconds*1000): new Date(); const t = d.createdAt? dateObj.toLocaleString('en-HK'):'Just now'; const st = getCardStyle(d, dateObj); return `<div class="border-2 ${st.bg} p-3 rounded-xl mb-2 bg-white"><div class="flex justify-between"><b>Fleet No. ${d.busNo}</b><span class="text-xs">${t}</span></div><div class="text-sm font-bold mt-1">Reporter: ${reporterDisplay(d)}</div><div class="text-sm font-bold mt-1">Citybus Route: ${d.route || '-'}</div><div class="font-bold">${st.tag} - ${problemText(d)}</div>${d.note?`<div class="text-sm">Remark: ${d.note}</div>`:''}<button onclick="deleteMine('${d.id}')" class="text-xs text-red-600 underline mt-1">Delete this record</button></div>`; }).join(''); }
+window.deleteMine = async (id) => { if(!confirm('Delete this record?')) return; await deleteDoc(doc(db,"Checks", id)); alert('Deleted'); };
+const q = query(collection(db,"Checks"), orderBy("createdAt","desc"));
+onSnapshot(q, snap=>{ reports=[]; snap.forEach(d=>{ let data=d.data(); data.id=d.id; reports.push(data); }); if(selected) showBus(selected); if(currentTab==='history') renderMyHistory(); if(currentTab==='admin') renderAllReports(); });
+loadCustomFleet();
+checkLogin(); switchAuth('login');
+</script>
+</head>
+<body class="bg-[#f2f3f5] min-h-screen pb-10">
+<div id="topbar" class="desktop-header bg-black text-white">
+  <div class="app-shell max-w-[1280px] mx-auto px-4 lg:px-6 h-[64px] flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="leading-tight">
+        <div class="font-black text-[17px] tracking-tight">Bus Speaker Database</div>
+        <div class="text-[11px] text-gray-400 hidden sm:block">Stopreporter • Citybus Only • Internal System</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="userLabel" class="hidden md:block text-sm text-gray-300"></span>
+      <button id="logoutBtn" onclick="logoutPhone()" class="hidden text-xs bg-white text-black px-3 py-2 rounded-lg font-bold">Log Out</button>
+    </div>
+  </div>
+</div>
+
+<div class="app-shell max-w-[1280px] mx-auto px-4 lg:px-6 pt-3 lg:pt-5">
+<div class="lg:hidden mb-3 mobile-pad">
+  <h1 class="text-2xl font-black tracking-tight">Bus Speaker Database</h1>
+  <p class="text-sm text-gray-500">Stopreporter - Citybus Only</p>
+</div>
+
+<div id="loginView" class="hidden bg-white p-5 rounded-2xl shadow max-w-md mx-auto lg:max-w-[520px]">
+<div class="text-center mb-4"><div class="font-black text-xl mt-1">Welcome Back</div><div class="text-sm text-gray-500">Login to continue to Bus Speaker Database</div></div>
+<div class="flex gap-2 mb-3"><button id="btnLoginTab" onclick="switchAuth('login')" class="flex-1 p-3 rounded-lg font-bold bg-black text-white">Login</button><button id="btnRegisterTab" onclick="switchAuth('register')" class="flex-1 p-3 rounded-lg font-bold bg-gray-200">Register</button></div>
+<div id="nameBox" class="hidden"><label class="font-bold text-sm mt-3 block">Username *</label><input id="usernameInput" class="w-full border p-3 rounded-lg text-lg mt-1" placeholder="Username"></div>
+<label class="font-bold text-sm mt-3 block">Phone Number</label><input id="phoneInput" class="w-full border p-3 rounded-lg text-lg mt-1" placeholder="e.g. 91234567" inputmode="numeric">
+<label class="font-bold text-sm mt-3 block">Password</label><input id="passwordInput" type="password" class="w-full border p-3 rounded-lg text-lg mt-1" placeholder="At least 4 characters">
+<div id="confirmBox" class="hidden"><label class="font-bold text-sm mt-3 block">Confirm Password</label><input id="confirmInput" type="password" class="w-full border p-3 rounded-lg text-lg mt-1" placeholder="Enter password again"></div>
+<button id="authBtn" onclick="handleAuth()" class="w-full bg-black text-white p-3 rounded-xl font-bold mt-4">Login</button>
+<button onclick="showForgot()" class="w-full text-sm text-blue-600 underline mt-2">Forgot Password? Click here to send request to Admin</button>
+<div id="forgotBox" class="hidden mt-3 bg-orange-50 border-2 border-orange-300 p-3 rounded-xl"><div class="font-bold text-sm">Forgot Password - Send Request to Admin</div><label class="font-bold text-sm mt-2 block">Your Phone Number *</label><input id="forgotPhone" class="w-full border p-2 rounded-lg mt-1" placeholder="e.g. 91234567" inputmode="numeric"><label class="font-bold text-sm mt-2 block">New Password You Want *</label><input id="forgotNewPw" type="password" class="w-full border p-2 rounded-lg mt-1" placeholder="At least 4 characters"><label class="font-bold text-sm mt-2 block">Confirm New Password *</label><input id="forgotNewPw2" type="password" class="w-full border p-2 rounded-lg mt-1" placeholder="Enter new password again"><button onclick="submitResetRequest()" class="w-full bg-orange-600 text-white p-3 rounded-xl font-bold mt-3">Send Request to Admin</button></div>
+</div>
+
+<div id="mainView" class="hidden">
+<div id="adminBar" class="hidden mb-3"><button id="tabAdmin" onclick="switchTab('admin')" class="w-full p-3 rounded-xl font-bold bg-red-600 text-white shadow-lg">Admin Panel - Click to Manage Users & All Reports</button></div>
+<div class="flex gap-2 mb-3 lg:mb-4 mobile-pad lg:px-0"><button id="tabSearch" onclick="switchTab('search')" class="flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-black text-white">Search</button><button id="tabHistory" onclick="switchTab('history')" class="flex-1 lg:flex-none lg:px-6 p-3 rounded-lg font-bold bg-gray-200">My History</button><span class="hidden lg:flex items-center text-sm text-gray-500 ml-2">← Choose a function, content will show below</span></div>
+<div class="desktop-grid">
+  <div class="desktop-left space-y-3 mobile-pad lg:px-0">
+    <div id="searchView">
+      <div class="bg-yellow-100 p-4 rounded-2xl shadow mb-3 mobile-card">
+        <label class="font-bold">Search Fleet No.</label>
+        <div class="flex gap-2 mt-2"><input id="searchBox" class="flex-1 border p-3 rounded-lg text-lg bg-white" placeholder="e.g. 2503" inputmode="numeric" onkeydown="if(event.key==='Enter')searchBus()"><button onclick="searchBus()" class="bg-black text-white px-5 rounded-lg font-bold">Search</button></div>
+        <div class="text-xs text-gray-600 mt-2 hidden lg:block">Tip: On desktop, result will show on the right side.</div>
+      </div>
+      <div id="result" class="mb-3 lg:hidden"><div class="bg-white p-4 rounded-xl text-center text-gray-500">Enter Fleet No. above, then press Search</div></div>
+      <div id="form" class="hidden bg-white p-4 rounded-2xl shadow mb-4 space-y-2 mobile-card"><div id="formTitle" class="font-bold">Add Record</div><div class="text-sm">Fleet No.: <b id="fleetLabel"></b></div><div><label class="font-bold">Which Citybus Route Are You On? *</label><input id="routeInput" class="w-full border p-3 rounded-lg text-lg" placeholder="Type yourself, e.g. 10 / A21 / E11"></div><label class="flex gap-2 border p-2 rounded-lg"><input type="checkbox" id="c1"> 啞咗</label><label class="flex gap-2 border p-2 rounded-lg"><input type="checkbox" id="c2"> 還回立體</label><label class="flex gap-2 border p-2 rounded-lg"><input type="checkbox" id="c3"> 爆音</label><label class="flex gap-2 border p-2 rounded-lg"><input type="checkbox" id="c4"> 打扁咗</label><label class="flex gap-2 border p-2 rounded-lg"><input type="checkbox" id="c5"> 正常</label><input id="note" class="w-full border p-2 rounded-lg" placeholder="Other / Remark"><button onclick="saveReport()" class="w-full bg-red-600 text-white p-3 rounded-xl font-bold">Save Record</button></div>
+    </div>
+  </div>
+  <div class="space-y-3 mobile-pad lg:px-0">
+    <div id="resultDesktop" class="hidden lg:block"></div>
+    <div id="historyView" class="hidden"><div class="bg-white p-4 rounded-2xl shadow mb-3"><div class="font-bold">My History</div><div class="text-sm text-gray-500">Only you can see this. Total: <b id="myCount">0</b> records</div></div><div id="myHistoryList"></div></div>
+    <div id="adminView" class="hidden">
+      <div class="bg-blue-100 p-4 rounded-2xl shadow mb-3 border-2 border-blue-400"><div class="font-bold">Admin - Add New Fleet No. (<span id="customFleetCount">0</span> added)</div><div class="text-xs text-gray-600 mt-1">Type a new fleet number here. Everyone can search it immediately, no need to re-upload.</div><div class="flex gap-2 mt-2"><input id="newFleetInput" class="flex-1 border p-3 rounded-lg" placeholder="e.g. 9999" inputmode="numeric"><button onclick="adminAddFleet()" class="bg-blue-600 text-white px-4 rounded-lg font-bold">Add</button></div><div id="customFleetList" class="mt-2"></div></div>
+      <div class="bg-red-100 p-4 rounded-2xl shadow mb-3 border-2 border-red-400"><div class="font-bold text-red-700">Danger Zone - Delete All Reports</div><div class="text-xs mt-1">This will delete ALL reports in Checks. Users and Fleet Numbers (CustomFleet + base list) will NOT be deleted.</div><button onclick="adminDeleteAllReports()" class="w-full bg-red-700 text-white p-3 rounded-xl font-bold mt-2">Delete ALL Reports</button></div>
+      <div class="bg-orange-100 p-4 rounded-2xl shadow mb-3 border-2 border-orange-400"><div class="font-bold">Password Reset Requests (<span id="resetCount">0</span> pending)</div><button onclick="loadResetRequests()" class="text-xs underline mt-1">Refresh Requests</button></div><div id="resetList" class="mb-4"></div>
+      <div class="bg-white p-4 rounded-2xl shadow mb-3"><div class="font-bold">Admin - All Users (<span id="userCount">0</span>)</div><div class="text-xs text-gray-500">You can see: Name + Phone + Report Count + Password Reset</div><button onclick="refreshAdmin()" class="text-xs underline mt-1">Refresh</button></div><div id="userList" class="mb-4"></div><div class="bg-white p-4 rounded-2xl shadow mb-3"><div class="font-bold">Admin - All Reports (<span id="allReportCount">0</span>)</div><div class="flex gap-2 mt-2"><button id="filterAll" onclick="setAdminFilter('all')" class="px-3 py-1 rounded-full text-xs font-bold bg-black text-white">All</button><button id="filterIssue" onclick="setAdminFilter('issue')" class="px-3 py-1 rounded-full text-xs font-bold bg-gray-200">Issue Only</button><button id="filterOk" onclick="setAdminFilter('ok')" class="px-3 py-1 rounded-full text-xs font-bold bg-gray-200">Normal Only</button></div><input id="adminSearch" oninput="renderAllReports()" class="w-full border p-2 rounded-lg mt-2" placeholder="Search by Fleet No. / Route / Name / Phone"></div><div id="allReportsList"></div>
+    </div>
+  </div>
+</div>
+</div>
+</div>
+<div style="position:fixed; bottom:4px; right:6px; font-size:9px; color:#000; z-index:50;">Powered by NV9609</div>
+<script>
+const _observer = new MutationObserver(()=>{
+  const src = document.getElementById('result');
+  const dst = document.getElementById('resultDesktop');
+  if(src && dst && window.innerWidth >= 1024){ dst.innerHTML = src.innerHTML; }
+});
+const _res = document.getElementById('result');
+if(_res) _observer.observe(_res, {childList:true, subtree:true});
+</script>
+</body>
+</html>
